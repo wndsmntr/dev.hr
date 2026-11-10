@@ -60,6 +60,7 @@ dialog textarea{min-height:200px;white-space:pre}
 .kwrow button{padding:5px 0}
 .wa{font-size:12px;color:var(--ok);text-decoration:none;border:1px solid var(--ok);border-radius:99px;padding:1px 10px;display:inline-block;margin-top:4px}
 .wa:hover{background:var(--bg)}
+.pos{font-size:12px;color:var(--accent);font-weight:500}
 .sumsec{margin:14px 0 4px;font-weight:600;font-size:14px}
 dialog ul{margin:4px 0;padding-left:20px}
 dialog#sum{max-height:85vh}
@@ -78,6 +79,9 @@ input[type=password]{width:100%;padding:8px 10px;background:var(--bg);border:1px
 <main id="app" hidden>
   <section class="panel" aria-label="Kriteria posisi">
     <h2>Kriteria posisi</h2>
+    <label for="jobsel">Pilih posisi</label>
+    <select id="jobsel"></select>
+    <p style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 0"><button type="button" id="addjob">Tambah posisi</button><button type="button" id="deljob">Hapus posisi</button></p>
     <label for="title">Nama posisi</label>
     <input type="text" id="title">
     <label>Kriteria dan Tahun Pengalaman</label>
@@ -102,7 +106,7 @@ input[type=password]{width:100%;padding:8px 10px;background:var(--bg);border:1px
 
   <section aria-label="Kandidat">
     <div id="drop" tabindex="0" role="button" aria-label="Pilih file CV PDF">
-      <strong>Upload CV (PDF)</strong>
+      <strong>Upload CV (PDF)</strong><span class="pos" id="dropPos"></span>
       <span class="sub">Tarik file ke sini atau klik untuk memilih. Bisa banyak file sekaligus.</span>
       <input type="file" id="file" accept="application/pdf" multiple hidden>
     </div>
@@ -134,18 +138,18 @@ input[type=password]{width:100%;padding:8px 10px;background:var(--bg);border:1px
 const SUPABASE_URL="https://hybavwvckijszxrrxpkl.supabase.co",SUPABASE_ANON_KEY="sb_publishable_qBvB9oHZLRpFDjjtB4i_HQ_ixQqBFcf";
 const STATUS=["Baru","Interview HRD","Interview User","Lolos","Ditolak"];
 const DEF={job:{title:"Staff HRD",kw:"recruitment:2\npayroll:2\nbpjs:1\nexcel:1\nonboarding:0\nkomunikasi:0",yrs:2,edu:3,pass:60},cands:[]};
-let S=JSON.parse(JSON.stringify(DEF)), filter="Semua", openId=null;
+let S=JSON.parse(JSON.stringify(DEF)), filter="Semua", openId=null, posFilter="";
 const $=id=>document.getElementById(id);
 
 S.cands.forEach(c=>{if(c.status==="Interview")c.status="Interview HRD"});
 function save(){}
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-function parseKw(){return S.job.kw.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{const soft=l[0]==="#";if(soft)l=l.slice(1).trim();const i=l.lastIndexOf(":");let w=0,k=l;if(i>0&&/^\d+$/.test(l.slice(i+1).trim())){w=+l.slice(i+1);k=l.slice(0,i)}return{soft,k:k.trim().toLowerCase(),w:Math.max(0,Math.min(40,w))}})}
+function parseKw(j=S.job){return j.kw.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{const soft=l[0]==="#";if(soft)l=l.slice(1).trim();const i=l.lastIndexOf(":");let w=0,k=l;if(i>0&&/^\d+$/.test(l.slice(i+1).trim())){w=+l.slice(i+1);k=l.slice(0,i)}return{soft,k:k.trim().toLowerCase(),w:Math.max(0,Math.min(40,w))}})}
 function eduLevel(t){const x=t.toLowerCase();if(/\bs-?3\b|doktor|ph\.?d/.test(x))return 5;if(/\bs-?2\b|magister|master|\bm\.?(sc|m|si|kom)\b/.test(x))return 4;if(/\bs-?1\b|sarjana|bachelor|\bstrata 1\b/.test(x))return 3;if(/\bd-?3\b|diploma/.test(x))return 2;if(/\bsma\b|\bsmk\b|\bma\b/.test(x))return 1;return 0}
 function years(t){let m=0;for(const x of t.matchAll(/(\d{1,2})\s*\+?\s*(?:tahun|thn|years?|yrs?)/gi)){const n=+x[1];if(n<=40&&n>m)m=n}return m}
 function score(c){
-  const kws=parseKw(),t=c.text.toLowerCase(),y=years(c.text);
+  const J=jobFor(c),kws=parseKw(J),t=c.text.toLowerCase(),y=years(c.text);
   const res=kws.map(o=>{let p=t.indexOf(o.k);if(p<0)return{o,has:false,y:0,f:0};let ky=0;
     while(p>=0){const m=years(t.slice(Math.max(0,p-60),p+o.k.length+60));if(m>ky)ky=m;p=t.indexOf(o.k,p+1)}
     if(!ky)ky=y;return{o,has:true,y:ky,f:o.w?Math.min(1,ky/o.w):1}});
@@ -153,17 +157,21 @@ function score(c){
   const avg=a=>a.length?a.reduce((x,r)=>x+r.f,0)/a.length:null;
   const gh=avg(res.filter(r=>!r.o.soft)),gs=avg(res.filter(r=>r.o.soft));
   const kscore=gh!==null&&gs!==null?gh*50+gs*20:gh!==null?gh*70:gs!==null?gs*70:70;
-  const minY=+S.job.yrs||0,e=eduLevel(c.text),minE=+S.job.edu||0;
+  const minY=+J.yrs||0,e=eduLevel(c.text),minE=+J.edu||0;
   const ys=minY?Math.min(1,y/minY):1, es=minE?Math.min(1,e/minE):1;
   c.score=Math.round(kscore+ys*15+es*15);
   c.d={hit:hit.map(r=>r.o.k+(r.o.soft?" [soft]":"")+(r.o.w?" ("+r.y+" thn)":"")),miss:miss.map(r=>r.o.k+(r.o.soft?" [soft]":"")+(r.has?" ("+r.y+" dari "+r.o.w+" thn)":" (tidak ada)")),y,e};
 }
 const EDU=["Tidak terdeteksi","SMA/SMK","D3","S1","S2","S3"];
 function guessName(text,file){
-  for(const l of text.split("\n").map(s=>s.trim()).filter(Boolean).slice(0,8)){
-    if(/[\d@:\/]/.test(l))continue;const w=l.split(/\s+/);
-    if(w.length>=2&&w.length<=4&&l.length<40&&!/curriculum|resume|cv\b|riwayat/i.test(l))return l.replace(/\b\w/g,c=>c.toUpperCase())
-  }return file.replace(/\.pdf$/i,"").replace(/[_-]+/g," ")}
+  const cap=t=>t.toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
+  const fn=file.replace(/\.pdf$/i,"").replace(/[_\-.()\d]+/g," ").replace(/\b(cv|resume|curriculum|vitae|lamaran|surat|application|apply|terbaru|new|final|fix)\b/gi," ").replace(/\s+/g," ").trim();
+  const lines=text.split("\n").map(x=>x.trim()).filter(Boolean).slice(0,12);
+  const ok=l=>{const w=l.split(/\s+/);return w.length>=2&&w.length<=5&&l.length<45&&!/[\d@:\/]/.test(l)};
+  const toks=fn.toLowerCase().split(" ").filter(w=>w.length>2);
+  if(toks.length){for(const l of lines)if(ok(l)&&toks.some(t=>l.toLowerCase().includes(t)))return cap(l);return cap(fn)}
+  for(const l of lines)if(ok(l)&&!/curriculum|resume|cv\b|riwayat/i.test(l))return cap(l);
+  return cap(file.replace(/\.pdf$/i,""))}
 async function readPdf(file){
   const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;let out="";
   for(let p=1;p<=Math.min(pdf.numPages,6);p++){const tc=await (await pdf.getPage(p)).getTextContent();out+=tc.items.map(i=>i.str+(i.hasEOL?"\n":" ")).join("")+"\n"}
@@ -177,7 +185,7 @@ async function addFiles(files){
     try{
       const text=await readPdf(f);
       if(text.replace(/\s/g,"").length<60){bad.push(f.name+" (teks kosong, mungkin hasil scan)");continue}
-      const c={id:Date.now()+Math.random().toString(36).slice(2,6),file:f.name,text:text.slice(0,30000),status:"Baru",note:"",
+      const c={id:Date.now()+Math.random().toString(36).slice(2,6),file:f.name,text:text.slice(0,30000),status:"Baru",note:"",posisi:S.job.title||"",
         name:guessName(text,f.name),email:(text.match(/[\w.+-]+@[\w-]+\.[\w.]+/)||[""])[0],phone:(text.match(/(?:\+62|62|0)8[\d\s-]{8,13}/)||[""])[0].trim()};
       score(c);S.cands.push(c);await dbSaveCand(c);ok++
     }catch(e){bad.push(f.name+" (gagal dibaca)")}
@@ -197,11 +205,11 @@ function sections(text){
   return out}
 function showSum(id){
   const c=S.cands.find(x=>x.id===id);if(!c)return;
-  const pass=+S.job.pass||60,tot=c.d.hit.length+c.d.miss.length;
+  const pass=+jobFor(c).pass||60,tot=c.d.hit.length+c.d.miss.length;
   const v=c.score>=pass?["Cocok dilanjutkan","ok"]:c.score>=pass-15?["Perlu dipertimbangkan","warn"]:["Kurang sesuai","bad"];
   const sec=sections(c.text),chips=(a,k)=>a.map(x=>`<span class="chip ${k}">${esc(x)}</span>`).join("")||'<span class="sub">Tidak ada</span>';
   let h=`<h2>${esc(c.name)} <span class="badge" style="color:var(--${v[1]})">${v[0]}</span></h2>
-  <p>Melamar posisi <b>${esc(S.job.title)}</b> dengan skor <b>${c.score}/100</b>. Pendidikan tertinggi: <b>${EDU[c.d.e]}</b>. Pengalaman terlama yang disebut: <b>${c.d.y?c.d.y+" tahun":"tidak terdeteksi"}</b>. Memenuhi <b>${c.d.hit.length} dari ${tot}</b> kriteria.</p>
+  <p>Melamar bagian <b>${esc(c.posisi||S.job.title)}</b> dengan skor <b>${c.score}/100</b>. Pendidikan tertinggi: <b>${EDU[c.d.e]}</b>. Pengalaman terlama yang disebut: <b>${c.d.y?c.d.y+" tahun":"tidak terdeteksi"}</b>. Memenuhi <b>${c.d.hit.length} dari ${tot}</b> kriteria.</p>
   <p class="sub">${esc([c.email,c.phone].filter(Boolean).join(", ")||"Kontak tidak terdeteksi")}</p>
   <div class="sumsec">Kriteria terpenuhi</div>${chips(c.d.hit,"y")}
   <div class="sumsec">Kriteria belum terpenuhi</div>${chips(c.d.miss,"n")}`;
@@ -211,24 +219,25 @@ function showSum(id){
   h+=`<p style="text-align:right;margin-bottom:0"><button id="sumclose">Tutup</button></p>`;
   $("sumbody").innerHTML=h;$("sumclose").onclick=()=>$("sum").close();$("sum").showModal()}
 function waNum(p){const d=(p||"").replace(/\D/g,"");if(!d)return"";if(d.startsWith("62"))return d;if(d.startsWith("0"))return"62"+d.slice(1);if(d.startsWith("8"))return"62"+d;return d}
-function waLink(c){const n=waNum(c.phone);if(!n)return"";const t=encodeURIComponent("Halo "+c.name+", kami dari HRD terkait lamaran Anda untuk posisi "+S.job.title+". ");return `<a class="wa" href="https://wa.me/${n}?text=${t}" target="_blank" rel="noopener noreferrer">Chat WhatsApp</a>`}
+function waLink(c){const n=waNum(c.phone);if(!n)return"";const t=encodeURIComponent("Halo "+c.name+", kami dari HRD terkait lamaran Anda untuk posisi "+(c.posisi||S.job.title)+". ");return `<a class="wa" href="https://wa.me/${n}?text=${t}" target="_blank" rel="noopener noreferrer">Chat WhatsApp</a>`}
 function render(){
-  const cs=[...S.cands].sort((a,b)=>b.score-a.score);
+  const poss=[...new Set([...(S.jobs||[]).map(j=>j.title),...S.cands.map(x=>x.posisi)].filter(Boolean))];
+  const cs=[...S.cands].filter(c=>!posFilter||c.posisi===posFilter).sort((a,b)=>b.score-a.score);
   const cnt=s=>s==="Semua"?cs.length:cs.filter(c=>c.status===s).length;
   $("tabs").innerHTML=["Semua",...STATUS].map(s=>`<button class="tab ${filter===s?"on":""}" data-tab="${s}">${s} (${cnt(s)})</button>`).join("")+
-    `<span class="spacer"></span><button data-act="export">Export</button><button data-act="clear">Hapus semua</button>`;
+    `<select id="fpos" aria-label="Filter bagian" style="width:auto;max-width:190px"><option value="">Semua bagian</option>${poss.map(x=>`<option value="${esc(x)}" ${x===posFilter?"selected":""}>${esc(x)}</option>`).join("")}</select><span class="spacer"></span><button data-act="export">Export</button><button data-act="clear">Hapus semua</button>`;
   const rows=cs.filter(c=>filter==="Semua"||c.status===filter);
   if(!rows.length){$("body").innerHTML=`<tr><td colspan="5" class="empty">${S.cands.length?"Tidak ada kandidat dengan status ini.":"Belum ada kandidat. Upload CV PDF untuk mulai."}</td></tr>`;return}
   const pass=+S.job.pass||0;
   $("body").innerHTML=rows.map((c,i)=>{
-    const sug=pass&&c.score>=pass&&c.status==="Baru"?` <span class="sub">disarankan lolos</span>`:"";
-    let h=`<tr class="row" data-id="${c.id}"><td class="rank">${i+1}</td><td><b>${esc(c.name)}</b>${sug}<div class="sub">${esc(c.email||c.file)}</div>${waLink(c)}</td>
+    const pass=+jobFor(c).pass||0;const sug=pass&&c.score>=pass&&c.status==="Baru"?` <span class="sub">disarankan lolos</span>`:"";
+    let h=`<tr class="row" data-id="${c.id}"><td class="rank">${i+1}</td><td><b>${esc(c.name)}</b>${sug}<div class="pos">${esc(c.posisi||"Bagian belum diisi")}</div><div class="sub">${esc(c.email||c.file)}</div>${waLink(c)}</td>
     <td><div class="sc">${c.score}<div class="bar"><i style="width:${c.score}%"></i></div></div></td><td>${c.d.y?c.d.y+" thn":"-"}</td><td><span class="badge s-${c.status.replace(" ","")}">${c.status}</span></td></tr>`;
     if(openId===c.id)h+=`<tr class="detail"><td colspan="5"><div class="dgrid"><div>
       <b>Cocok (${c.d.hit.length})</b><div>${c.d.hit.map(k=>`<span class="chip y">${esc(k)}</span>`).join("")||'<span class="sub">Tidak ada</span>'}</div>
       <b>Belum terlihat (${c.d.miss.length})</b><div>${c.d.miss.map(k=>`<span class="chip n">${esc(k)}</span>`).join("")||'<span class="sub">Semua terpenuhi</span>'}</div>
       <p class="sub">Pendidikan: ${EDU[c.d.e]} · Telepon: ${esc(c.phone||"-")} · File: ${esc(c.file)}</p></div><div>
-      <label for="st">Status</label><select id="st" data-id="${c.id}">${STATUS.map(s=>`<option ${s===c.status?"selected":""}>${s}</option>`).join("")}</select>
+      <label for="nm">Nama kandidat</label><input type="text" id="nm" data-id="${c.id}" value="${esc(c.name)}"><label for="ps">Melamar bagian</label><select id="ps" data-id="${c.id}">${c.posisi?"":'<option value="" selected>(belum diisi)</option>'}${poss.map(x=>`<option value="${esc(x)}" ${x===c.posisi?"selected":""}>${esc(x)}</option>`).join("")}</select><label for="st">Status</label><select id="st" data-id="${c.id}">${STATUS.map(s=>`<option ${s===c.status?"selected":""}>${s}</option>`).join("")}</select>
       <label for="nt">Catatan HRD</label><textarea id="nt" data-id="${c.id}" style="font-family:inherit;min-height:80px">${esc(c.note)}</textarea>
       <p style="margin:8px 0 0;display:flex;gap:8px;flex-wrap:wrap"><button class="primary" data-sum="${c.id}">Lihat rangkuman CV</button><button data-del="${c.id}">Hapus kandidat</button></p></div></div></td></tr>`;
     return h}).join("")}
@@ -242,8 +251,8 @@ document.addEventListener("click",e=>{
   else if(t.dataset.del){dbDel(t.dataset.del);S.cands=S.cands.filter(c=>c.id!==t.dataset.del);openId=null;render()}
   else if(t.classList.contains("row")){openId=openId===t.dataset.id?null:t.dataset.id;render()}
 });
-document.addEventListener("change",e=>{if(e.target.id==="st"){S.cands.find(c=>c.id===e.target.dataset.id).status=e.target.value;dbSaveCand(S.cands.find(c=>c.id===e.target.dataset.id));render()}});
-document.addEventListener("input",e=>{if(e.target.id==="nt"){{const c=S.cands.find(c=>c.id===e.target.dataset.id);c.note=e.target.value;clearTimeout(c._t);c._t=setTimeout(()=>dbSaveCand(c),600)}}});
+document.addEventListener("change",e=>{if(e.target.id==="fpos"){posFilter=e.target.value;render();return}if(e.target.id==="ps"){const c=S.cands.find(x=>x.id===e.target.dataset.id);if(c){c.posisi=e.target.value;score(c);dbSaveCand(c)}render();return}if(e.target.id==="nm"){render();return}if(e.target.id==="st"){S.cands.find(c=>c.id===e.target.dataset.id).status=e.target.value;dbSaveCand(S.cands.find(c=>c.id===e.target.dataset.id));render()}});
+document.addEventListener("input",e=>{if(e.target.id==="nm"||e.target.id==="ps"){const c=S.cands.find(c=>c.id===e.target.dataset.id);if(c){if(e.target.id==="nm")c.name=e.target.value;else c.posisi=e.target.value;clearTimeout(c._t);c._t=setTimeout(()=>dbSaveCand(c),600)}return}if(e.target.id==="nt"){{const c=S.cands.find(c=>c.id===e.target.dataset.id);c.note=e.target.value;clearTimeout(c._t);c._t=setTimeout(()=>dbSaveCand(c),600)}}});
 
 function kwRow(k,w){return `<div class="kwrow"><input type="text" class="kk" value="${esc(k)}" placeholder="mis. sterilisasi alat" aria-label="Kriteria"><input type="number" class="kw" min="0" max="40" value="${w}" aria-label="Tahun pengalaman"><button type="button" class="mv" title="Pindahkan ke kelompok lain" aria-label="Pindahkan ke kelompok lain">⇅</button><button type="button" class="rm" aria-label="Hapus">✕</button></div>`}
 function renderKw(str){
@@ -260,7 +269,29 @@ function rowClick(e){const r=e.target.closest(".kwrow");if(!r)return;if(e.target
 $("addkw").onclick=()=>addRow("kwlist");$("addsoft").onclick=()=>addRow("softlist");
 $("kwlist").onclick=rowClick;$("softlist").onclick=rowClick;
 function fill(){$("title").value=S.job.title;renderKw(S.job.kw);$("yrs").value=S.job.yrs;$("edu").value=S.job.edu;$("pass").value=S.job.pass}
-$("apply").onclick=()=>{S.job={title:$("title").value,kw:readKw(),yrs:$("yrs").value,edu:$("edu").value,pass:$("pass").value};S.cands.forEach(score);dbSaveJob();dbSaveCands(S.cands);render();$("msg").textContent="Kriteria diterapkan, skor "+S.cands.length+" kandidat dihitung ulang."};
+$("apply").onclick=async()=>{
+  const j=S.job,old=j.title,nt=$("title").value.trim();
+  if(nt&&nt!==old&&S.jobs.some(x=>x!==j&&x.title.toLowerCase()===nt.toLowerCase())){$("msg").textContent="Nama posisi sudah dipakai.";return}
+  j.title=nt||old;j.kw=readKw();j.yrs=$("yrs").value;j.edu=$("edu").value;j.pass=$("pass").value;
+  if(j.title!==old)S.cands.forEach(c=>{if(c.posisi===old)c.posisi=j.title});
+  S.cands.forEach(score);await dbSaveJob(j);dbSaveCands(S.cands);fillPos();render();
+  $("msg").textContent="Kriteria posisi "+j.title+" diterapkan, skor kandidat dihitung ulang."};
+function jobFor(c){const a=S.jobs||[];return a.find(j=>j.title===c.posisi)||a[0]||S.job}
+function fillPos(){$("jobsel").innerHTML=S.jobs.map((j,i)=>`<option value="${i}" ${j===S.job?"selected":""}>${esc(j.title)}</option>`).join("");$("dropPos").textContent="Dilamar untuk: "+S.job.title}
+function selectJob(i){S.job=S.jobs[i];fillPos();fill()}
+$("jobsel").onchange=e=>selectJob(+e.target.value);
+$("addjob").onclick=async()=>{
+  const n=(prompt("Nama posisi baru (misalnya: Resepsionis)")||"").trim();if(!n)return;
+  if(S.jobs.some(j=>j.title.toLowerCase()===n.toLowerCase())){$("msg").textContent="Posisi itu sudah ada.";return}
+  const j={id:"p"+Date.now().toString(36),title:n,kw:"",yrs:0,edu:0,pass:60};
+  S.jobs.push(j);S.job=j;await dbSaveJob(j);fillPos();fill();render();
+  $("msg").textContent="Posisi ditambahkan. Isi hard skill dan soft skill-nya, lalu klik Terapkan kriteria."};
+$("deljob").onclick=async()=>{
+  if(S.jobs.length<2){$("msg").textContent="Minimal harus ada satu posisi.";return}
+  const n=S.cands.filter(c=>c.posisi===S.job.title).length;
+  if(!confirm("Hapus posisi "+S.job.title+"?"+(n?" "+n+" kandidat dengan posisi ini tetap ada, tetapi dinilai memakai kriteria posisi pertama.":"")))return;
+  const{error}=await sb.from("positions").delete().eq("id",S.job.id);if(error){dbErr(error);return}
+  S.jobs=S.jobs.filter(j=>j!==S.job);S.job=S.jobs[0];S.cands.forEach(score);dbSaveCands(S.cands);fillPos();fill();render()};
 $("drop").onclick=()=>$("file").click();
 $("drop").onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();$("file").click()}};
 $("file").onchange=e=>{addFiles(e.target.files);e.target.value=""};
@@ -270,8 +301,8 @@ $("drop").addEventListener("drop",e=>addFiles(e.dataTransfer.files));
 
 function csvData(sep){
   const cell=v=>sep===","?'"'+String(v).replace(/"/g,'""')+'"':String(v).replace(/[\t\r\n]+/g," ");
-  const head=["Peringkat","Nama","Email","Telepon","Skor","Pengalaman (thn)","Kriteria terpenuhi","Kriteria belum terpenuhi","Status","Catatan"];
-  const rows=[...S.cands].sort((a,b)=>b.score-a.score).map((c,i)=>[i+1,c.name,c.email,c.phone,c.score,c.d.y,c.d.hit.join("; "),c.d.miss.join("; "),c.status,c.note]);
+  const head=["Peringkat","Nama","Melamar bagian","Email","Telepon","Skor","Pengalaman (thn)","Kriteria terpenuhi","Kriteria belum terpenuhi","Status","Catatan"];
+  const rows=[...S.cands].sort((a,b)=>b.score-a.score).map((c,i)=>[i+1,c.name,c.posisi||"",c.email,c.phone,c.score,c.d.y,c.d.hit.join("; "),c.d.miss.join("; "),c.status,c.note]);
   return [head,...rows].map(r=>r.map(cell).join(sep)).join("\n")}
 function doExport(){if(!S.cands.length){$("msg").textContent="Belum ada data untuk diexport.";return}$("exp").value=csvData("\t");$("dlg").showModal()}
 $("cp").onclick=async()=>{try{await navigator.clipboard.writeText($("exp").value)}catch(e){$("exp").select();document.execCommand("copy")}$("cp").textContent="Tersalin";setTimeout(()=>$("cp").textContent="Salin",1500)};
@@ -279,24 +310,27 @@ $("dl").onclick=()=>{const a=document.createElement("a");a.href=URL.createObject
 $("close").onclick=()=>$("dlg").close();
 if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const sb=SUPABASE_URL.startsWith("http")?supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY):null;
-const toRow=c=>({id:c.id,name:c.name,email:c.email,phone:c.phone,file:c.file,cv_text:c.text,status:c.status,note:c.note,score:c.score,detail:c.d});
-const fromRow=r=>({id:r.id,name:r.name,email:r.email||"",phone:r.phone||"",file:r.file||"",text:r.cv_text||"",status:r.status,note:r.note||"",score:r.score,d:r.detail||{hit:[],miss:[],y:0,e:0}});
+const toRow=c=>({id:c.id,name:c.name,email:c.email,phone:c.phone,file:c.file,cv_text:c.text,status:c.status,note:c.note,posisi:c.posisi||"",score:c.score,detail:c.d});
+const fromRow=r=>({id:r.id,name:r.name,email:r.email||"",phone:r.phone||"",file:r.file||"",text:r.cv_text||"",status:r.status,note:r.note||"",posisi:r.posisi||"",score:r.score,d:r.detail||{hit:[],miss:[],y:0,e:0}});
 const dbErr=e=>{if(e)$("msg").textContent="Gagal menyimpan ke database: "+e.message};
 async function dbSaveCand(c){const{error}=await sb.from("candidates").upsert(toRow(c));dbErr(error)}
 async function dbSaveCands(l){if(!l.length)return;const{error}=await sb.from("candidates").upsert(l.map(toRow));dbErr(error)}
 async function dbDel(id){const{error}=await sb.from("candidates").delete().eq("id",id);dbErr(error)}
 async function dbDelAll(){const{error}=await sb.from("candidates").delete().neq("id","");dbErr(error)}
-async function dbSaveJob(){const j=S.job;const{error}=await sb.from("job_settings").upsert({id:1,title:j.title,kw:j.kw,yrs:+j.yrs||0,edu:+j.edu||0,pass:+j.pass||0});dbErr(error)}
+async function dbSaveJob(j){const{error}=await sb.from("positions").upsert({id:j.id,title:j.title,kw:j.kw,yrs:+j.yrs||0,edu:+j.edu||0,pass:+j.pass||0});dbErr(error)}
 async function startApp(){
   const u=(await sb.auth.getUser()).data.user;
   const pr=u?await sb.from("profiles").select("approved").eq("id",u.id).maybeSingle():{};
   if(!pr.data||!pr.data.approved){await sb.auth.signOut();showLogin();$("lmsg").textContent="Akun Anda menunggu persetujuan admin. Hubungi admin HRD, lalu masuk kembali.";return}
   $("login").hidden=true;$("app").hidden=false;$("logout").hidden=false;$("msg").textContent="Memuat data…";
-  const j=await sb.from("job_settings").select("*").eq("id",1).maybeSingle();
-  if(j.data)S.job={title:j.data.title,kw:j.data.kw,yrs:j.data.yrs,edu:j.data.edu,pass:j.data.pass};
+  const j=await sb.from("positions").select("*").order("created_at");
+  if(j.error){dbErr(j.error);return}
+  S.jobs=j.data.map(r=>({id:r.id,title:r.title,kw:r.kw||"",yrs:r.yrs,edu:r.edu,pass:r.pass}));
+  if(!S.jobs.length){const d={id:"p"+Date.now().toString(36),title:"Posisi 1",kw:DEF.job.kw,yrs:2,edu:3,pass:60};S.jobs=[d];await dbSaveJob(d)}
+  S.job=S.jobs[0];
   const c=await sb.from("candidates").select("*").order("created_at");
   if(c.error){dbErr(c.error);return}
-  S.cands=c.data.map(fromRow);S.cands.forEach(score);$("msg").textContent="";fill();render()}
+  S.cands=c.data.map(fromRow);S.cands.forEach(score);$("msg").textContent="";fillPos();fill();render()}
 function showLogin(){$("login").hidden=false;$("app").hidden=true;$("logout").hidden=true}
 $("loginBtn").onclick=async()=>{
   $("lmsg").textContent="";
