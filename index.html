@@ -61,6 +61,14 @@ dialog textarea{min-height:200px;white-space:pre}
 .wa{font-size:12px;color:var(--ok);text-decoration:none;border:1px solid var(--ok);border-radius:99px;padding:1px 10px;display:inline-block;margin-top:4px}
 .wa:hover{background:var(--bg)}
 .pos{font-size:12px;color:var(--accent);font-weight:500}
+.refcard{border:1px solid var(--line);border-radius:8px;padding:4px 12px 12px;margin:8px 0;background:var(--surface);display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+.refwide{grid-column:1/-1}
+.cvtext{white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.6;max-height:55vh;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:12px;background:var(--bg)}
+mark{color:inherit;border-radius:3px;padding:0 2px}
+mark.hk{background:color-mix(in srgb,var(--ok) 30%,transparent)}
+mark.sk{background:color-mix(in srgb,var(--info) 30%,transparent)}
+dialog#rev{width:min(820px,94vw);max-height:90vh}
+@media (max-width:700px){.refcard{grid-template-columns:1fr}}
 .sumsec{margin:14px 0 4px;font-weight:600;font-size:14px}
 dialog ul{margin:4px 0;padding-left:20px}
 dialog#sum{max-height:85vh}
@@ -131,6 +139,7 @@ input[type=password]{width:100%;padding:8px 10px;background:var(--bg);border:1px
 </dialog>
 
 <dialog id="sum"><div id="sumbody"></div></dialog>
+<dialog id="rev"><div id="revbody"></div></dialog>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -179,7 +188,7 @@ async function readPdf(file){
 async function addFiles(files){
   const list=[...files].filter(f=>/pdf$/i.test(f.name)||f.type==="application/pdf");
   if(!list.length){$("msg").textContent="Hanya file PDF yang bisa diproses.";return}
-  let ok=0,bad=[];
+  let ok=0,bad=[],noPdf="";
   for(const f of list){
     $("msg").textContent="Membaca "+f.name+"…";
     try{
@@ -187,10 +196,10 @@ async function addFiles(files){
       if(text.replace(/\s/g,"").length<60){bad.push(f.name+" (teks kosong, mungkin hasil scan)");continue}
       const c={id:Date.now()+Math.random().toString(36).slice(2,6),file:f.name,text:text.slice(0,30000),status:"Baru",note:"",posisi:S.job.title||"",
         name:guessName(text,f.name),email:(text.match(/[\w.+-]+@[\w-]+\.[\w.]+/)||[""])[0],phone:(text.match(/(?:\+62|62|0)8[\d\s-]{8,13}/)||[""])[0].trim()};
-      score(c);S.cands.push(c);await dbSaveCand(c);ok++
+      score(c);{const up=await sb.storage.from("cv").upload(c.id+".pdf",f,{contentType:"application/pdf",upsert:true});if(!up.error)c.pdf=c.id+".pdf";else noPdf=up.error.message}S.cands.push(c);await dbSaveCand(c);ok++
     }catch(e){bad.push(f.name+" (gagal dibaca)")}
   }
-  $("msg").textContent=ok+" CV berhasil diproses."+(bad.length?" Gagal: "+bad.join(", ")+".":"");
+  $("msg").textContent=ok+" CV berhasil diproses."+(bad.length?" Gagal: "+bad.join(", ")+".":"")+(noPdf?" PDF asli tidak tersimpan ("+noPdf+").":"");
   save();render()}
 
 function sections(text){
@@ -216,8 +225,35 @@ function showSum(id){
   if(c.d.miss.length)h+=`<div class="sumsec">Yang perlu ditanyakan saat interview</div><ul>${c.d.miss.map(m=>`<li>Konfirmasi pengalaman: ${esc(m)}</li>`).join("")}</ul>`;
   for(const k in sec)h+=`<div class="sumsec">${k} (cuplikan dari CV)</div><div class="sub">${sec[k].map(esc).join("<br>")}</div>`;
   if(!Object.keys(sec).length)h+=`<p class="sub">Bagian pengalaman, pendidikan, dan keahlian tidak terdeteksi otomatis di CV ini.</p>`;
+  if((c.refs||[]).length)h+=`<div class="sumsec">Referensi kerja sebelumnya</div><ul>${c.refs.map(r=>`<li>${esc(r.nama||"(tanpa nama)")}${r.perusahaan?", "+esc(r.perusahaan):""} (${esc(r.jabatan||"")}): ${esc(r.status)}${r.catatan?". "+esc(r.catatan):""}</li>`).join("")}</ul>`;
   h+=`<p style="text-align:right;margin-bottom:0"><button id="sumclose">Tutup</button></p>`;
   $("sumbody").innerHTML=h;$("sumclose").onclick=()=>$("sum").close();$("sum").showModal()}
+const REFST=["Belum dihubungi","Sudah dihubungi","Positif","Ada catatan"],REFJ=["Atasan langsung","HRD","Rekan kerja","Lainnya"];
+function refBadge(c){const r=c.refs||[];if(!r.length)return"";const d=r.filter(x=>x.status!==REFST[0]).length;return `<div class="sub">Referensi: ${r.length} kontak, ${d} sudah dicek</div>`}
+function refWa(c,r){const n=waNum(r.telp);if(!n)return"";const t=encodeURIComponent("Selamat siang"+(r.nama?" "+r.nama:"")+", kami dari HRD. Kami ingin melakukan pengecekan referensi untuk "+c.name+(r.perusahaan?", yang pernah bekerja di "+r.perusahaan:"")+". Apakah Bapak/Ibu bersedia meluangkan waktu sebentar?");return `<a class="wa" href="https://wa.me/${n}?text=${t}" target="_blank" rel="noopener noreferrer">Chat WhatsApp</a> `}
+function refsHtml(c){
+  const rs=c.refs||[];
+  const f=(r,i,k,label,ph)=>`<div><label>${label}</label><input type="text" data-id="${c.id}" data-ri="${i}" data-rf="${k}" value="${esc(r[k]||"")}" placeholder="${ph||""}"></div>`;
+  const sel=(r,i,k,label,o)=>`<div><label>${label}</label><select data-id="${c.id}" data-ri="${i}" data-rf="${k}">${o.map(x=>`<option ${x===r[k]?"selected":""}>${x}</option>`).join("")}</select></div>`;
+  return `<div class="sumsec" style="margin-top:16px">Referensi pengalaman kerja sebelumnya</div>`+(rs.length?"":`<p class="sub">Belum ada kontak referensi.</p>`)+
+    rs.map((r,i)=>`<div class="refcard">${f(r,i,"nama","Nama kontak")}${f(r,i,"perusahaan","Perusahaan")}${sel(r,i,"jabatan","Hubungan dengan kandidat",REFJ)}${f(r,i,"telp","Telepon / WhatsApp","08xx")}${sel(r,i,"status","Status pengecekan",REFST)}<div></div><div class="refwide"><label>Catatan hasil pengecekan</label><textarea data-id="${c.id}" data-ri="${i}" data-rf="catatan" style="min-height:60px;font-family:inherit">${esc(r.catatan||"")}</textarea></div><p class="refwide" style="margin:10px 0 0">${refWa(c,r)}<button data-delref="${c.id}" data-ri="${i}">Hapus referensi</button></p></div>`).join("")+
+    `<button data-addref="${c.id}">Tambah referensi</button>`}
+function hlText(c){
+  const kws=parseKw(jobFor(c)).filter(o=>o.k);let h=esc(c.text);
+  if(kws.length){const map={};kws.forEach(o=>{map[esc(o.k).toLowerCase()]=o.soft});
+    const re=new RegExp(Object.keys(map).sort((a,b)=>b.length-a.length).map(k=>k.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")).join("|"),"gi");
+    h=h.replace(re,m=>`<mark class="${map[m.toLowerCase()]?"sk":"hk"}">${m}</mark>`)}
+  return h}
+async function showRev(id){
+  const c=S.cands.find(x=>x.id===id);if(!c)return;
+  $("revbody").innerHTML=`<h2>${esc(c.name)} <span class="sub">${esc(c.posisi||"")}</span></h2>
+  <p class="sub"><mark class="hk">Hard skill</mark> <mark class="sk">Soft skill</mark> kriteria yang ditemukan di CV ini. Teks diambil otomatis dari PDF; tata letak aslinya ada di file PDF.</p>
+  <p id="revpdf" style="margin:6px 0">${c.pdf?'<span class="sub">Menyiapkan tautan PDF…</span>':'<span class="sub">PDF asli tidak tersimpan untuk kandidat ini, hanya teks.</span>'}</p>
+  <div class="cvtext">${hlText(c)}</div>
+  <p style="text-align:right;margin-bottom:0"><button id="revclose">Tutup</button></p>`;
+  $("revclose").onclick=()=>$("rev").close();$("rev").showModal();
+  if(c.pdf){const{data,error}=await sb.storage.from("cv").createSignedUrl(c.pdf,600);
+    $("revpdf").innerHTML=error?'<span class="sub">Gagal menyiapkan PDF: '+esc(error.message)+'</span>':`<a class="wa" href="${data.signedUrl}" target="_blank" rel="noopener noreferrer">Buka PDF asli</a>`}}
 function waNum(p){const d=(p||"").replace(/\D/g,"");if(!d)return"";if(d.startsWith("62"))return d;if(d.startsWith("0"))return"62"+d.slice(1);if(d.startsWith("8"))return"62"+d;return d}
 function waLink(c){const n=waNum(c.phone);if(!n)return"";const t=encodeURIComponent("Halo "+c.name+", kami dari HRD terkait lamaran Anda untuk posisi "+(c.posisi||S.job.title)+". ");return `<a class="wa" href="https://wa.me/${n}?text=${t}" target="_blank" rel="noopener noreferrer">Chat WhatsApp</a>`}
 function render(){
@@ -231,7 +267,7 @@ function render(){
   const pass=+S.job.pass||0;
   $("body").innerHTML=rows.map((c,i)=>{
     const pass=+jobFor(c).pass||0;const sug=pass&&c.score>=pass&&c.status==="Baru"?` <span class="sub">disarankan lolos</span>`:"";
-    let h=`<tr class="row" data-id="${c.id}"><td class="rank">${i+1}</td><td><b>${esc(c.name)}</b>${sug}<div class="pos">${esc(c.posisi||"Bagian belum diisi")}</div><div class="sub">${esc(c.email||c.file)}</div>${waLink(c)}</td>
+    let h=`<tr class="row" data-id="${c.id}"><td class="rank">${i+1}</td><td><b>${esc(c.name)}</b>${sug}<div class="pos">${esc(c.posisi||"Bagian belum diisi")}</div>${refBadge(c)}<div class="sub">${esc(c.email||c.file)}</div>${waLink(c)}</td>
     <td><div class="sc">${c.score}<div class="bar"><i style="width:${c.score}%"></i></div></div></td><td>${c.d.y?c.d.y+" thn":"-"}</td><td><span class="badge s-${c.status.replace(" ","")}">${c.status}</span></td></tr>`;
     if(openId===c.id)h+=`<tr class="detail"><td colspan="5"><div class="dgrid"><div>
       <b>Cocok (${c.d.hit.length})</b><div>${c.d.hit.map(k=>`<span class="chip y">${esc(k)}</span>`).join("")||'<span class="sub">Tidak ada</span>'}</div>
@@ -239,20 +275,23 @@ function render(){
       <p class="sub">Pendidikan: ${EDU[c.d.e]} · Telepon: ${esc(c.phone||"-")} · File: ${esc(c.file)}</p></div><div>
       <label for="nm">Nama kandidat</label><input type="text" id="nm" data-id="${c.id}" value="${esc(c.name)}"><label for="ps">Melamar bagian</label><select id="ps" data-id="${c.id}">${c.posisi?"":'<option value="" selected>(belum diisi)</option>'}${poss.map(x=>`<option value="${esc(x)}" ${x===c.posisi?"selected":""}>${esc(x)}</option>`).join("")}</select><label for="st">Status</label><select id="st" data-id="${c.id}">${STATUS.map(s=>`<option ${s===c.status?"selected":""}>${s}</option>`).join("")}</select>
       <label for="nt">Catatan HRD</label><textarea id="nt" data-id="${c.id}" style="font-family:inherit;min-height:80px">${esc(c.note)}</textarea>
-      <p style="margin:8px 0 0;display:flex;gap:8px;flex-wrap:wrap"><button class="primary" data-sum="${c.id}">Lihat rangkuman CV</button><button data-del="${c.id}">Hapus kandidat</button></p></div></div></td></tr>`;
+      <p style="margin:8px 0 0;display:flex;gap:8px;flex-wrap:wrap"><button class="primary" data-rev="${c.id}">Tinjau CV</button><button data-sum="${c.id}">Lihat rangkuman CV</button><button data-del="${c.id}">Hapus kandidat</button></p></div></div>${refsHtml(c)}</td></tr>`;
     return h}).join("")}
 
 document.addEventListener("click",e=>{
-  const t=e.target.closest("[data-tab],[data-act],[data-del],[data-sum],.row");if(!t||e.target.closest("a"))return;
+  const t=e.target.closest("[data-tab],[data-act],[data-del],[data-sum],[data-rev],[data-addref],[data-delref],.row");if(!t||e.target.closest("a"))return;
   if(t.dataset.tab){filter=t.dataset.tab;render()}
   else if(t.dataset.act==="export")doExport();
   else if(t.dataset.act==="clear"){if(S.cands.length&&confirm("Hapus semua kandidat?")){dbDelAll();S.cands=[];openId=null;render()}}
+  else if(t.dataset.rev)showRev(t.dataset.rev);
+  else if(t.dataset.addref){const c=S.cands.find(x=>x.id===t.dataset.addref);if(c){(c.refs=c.refs||[]).push({nama:"",perusahaan:"",jabatan:REFJ[0],telp:"",status:REFST[0],catatan:""});dbSaveCand(c);render()}}
+  else if(t.dataset.delref){const c=S.cands.find(x=>x.id===t.dataset.delref);if(c&&c.refs&&confirm("Hapus kontak referensi ini?")){c.refs.splice(+t.dataset.ri,1);dbSaveCand(c);render()}}
   else if(t.dataset.sum)showSum(t.dataset.sum);
   else if(t.dataset.del){dbDel(t.dataset.del);S.cands=S.cands.filter(c=>c.id!==t.dataset.del);openId=null;render()}
   else if(t.classList.contains("row")){openId=openId===t.dataset.id?null:t.dataset.id;render()}
 });
-document.addEventListener("change",e=>{if(e.target.id==="fpos"){posFilter=e.target.value;render();return}if(e.target.id==="ps"){const c=S.cands.find(x=>x.id===e.target.dataset.id);if(c){c.posisi=e.target.value;score(c);dbSaveCand(c)}render();return}if(e.target.id==="nm"){render();return}if(e.target.id==="st"){S.cands.find(c=>c.id===e.target.dataset.id).status=e.target.value;dbSaveCand(S.cands.find(c=>c.id===e.target.dataset.id));render()}});
-document.addEventListener("input",e=>{if(e.target.id==="nm"||e.target.id==="ps"){const c=S.cands.find(c=>c.id===e.target.dataset.id);if(c){if(e.target.id==="nm")c.name=e.target.value;else c.posisi=e.target.value;clearTimeout(c._t);c._t=setTimeout(()=>dbSaveCand(c),600)}return}if(e.target.id==="nt"){{const c=S.cands.find(c=>c.id===e.target.dataset.id);c.note=e.target.value;clearTimeout(c._t);c._t=setTimeout(()=>dbSaveCand(c),600)}}});
+document.addEventListener("change",e=>{if(e.target.dataset.rf){if(e.target.tagName==="SELECT")render();return}if(e.target.id==="fpos"){posFilter=e.target.value;render();return}if(e.target.id==="ps"){const c=S.cands.find(x=>x.id===e.target.dataset.id);if(c){c.posisi=e.target.value;score(c);dbSaveCand(c)}render();return}if(e.target.id==="nm"){render();return}if(e.target.id==="st"){S.cands.find(c=>c.id===e.target.dataset.id).status=e.target.value;dbSaveCand(S.cands.find(c=>c.id===e.target.dataset.id));render()}});
+document.addEventListener("input",e=>{if(e.target.dataset.rf){const c=S.cands.find(x=>x.id===e.target.dataset.id);if(c&&c.refs&&c.refs[+e.target.dataset.ri]){c.refs[+e.target.dataset.ri][e.target.dataset.rf]=e.target.value;clearTimeout(c._t);c._t=setTimeout(()=>dbSaveCand(c),600)}return}if(e.target.id==="nm"||e.target.id==="ps"){const c=S.cands.find(c=>c.id===e.target.dataset.id);if(c){if(e.target.id==="nm")c.name=e.target.value;else c.posisi=e.target.value;clearTimeout(c._t);c._t=setTimeout(()=>dbSaveCand(c),600)}return}if(e.target.id==="nt"){{const c=S.cands.find(c=>c.id===e.target.dataset.id);c.note=e.target.value;clearTimeout(c._t);c._t=setTimeout(()=>dbSaveCand(c),600)}}});
 
 function kwRow(k,w){return `<div class="kwrow"><input type="text" class="kk" value="${esc(k)}" placeholder="mis. sterilisasi alat" aria-label="Kriteria"><input type="number" class="kw" min="0" max="40" value="${w}" aria-label="Tahun pengalaman"><button type="button" class="mv" title="Pindahkan ke kelompok lain" aria-label="Pindahkan ke kelompok lain">⇅</button><button type="button" class="rm" aria-label="Hapus">✕</button></div>`}
 function renderKw(str){
@@ -301,8 +340,8 @@ $("drop").addEventListener("drop",e=>addFiles(e.dataTransfer.files));
 
 function csvData(sep){
   const cell=v=>sep===","?'"'+String(v).replace(/"/g,'""')+'"':String(v).replace(/[\t\r\n]+/g," ");
-  const head=["Peringkat","Nama","Melamar bagian","Email","Telepon","Skor","Pengalaman (thn)","Kriteria terpenuhi","Kriteria belum terpenuhi","Status","Catatan"];
-  const rows=[...S.cands].sort((a,b)=>b.score-a.score).map((c,i)=>[i+1,c.name,c.posisi||"",c.email,c.phone,c.score,c.d.y,c.d.hit.join("; "),c.d.miss.join("; "),c.status,c.note]);
+  const head=["Peringkat","Nama","Melamar bagian","Email","Telepon","Skor","Pengalaman (thn)","Kriteria terpenuhi","Kriteria belum terpenuhi","Status","Catatan","Referensi"];
+  const rows=[...S.cands].sort((a,b)=>b.score-a.score).map((c,i)=>[i+1,c.name,c.posisi||"",c.email,c.phone,c.score,c.d.y,c.d.hit.join("; "),c.d.miss.join("; "),c.status,c.note,(c.refs||[]).map(r=>[r.nama,r.jabatan,r.perusahaan,r.telp,r.status].filter(Boolean).join(", ")).join(" | ")]);
   return [head,...rows].map(r=>r.map(cell).join(sep)).join("\n")}
 function doExport(){if(!S.cands.length){$("msg").textContent="Belum ada data untuk diexport.";return}$("exp").value=csvData("\t");$("dlg").showModal()}
 $("cp").onclick=async()=>{try{await navigator.clipboard.writeText($("exp").value)}catch(e){$("exp").select();document.execCommand("copy")}$("cp").textContent="Tersalin";setTimeout(()=>$("cp").textContent="Salin",1500)};
@@ -310,13 +349,13 @@ $("dl").onclick=()=>{const a=document.createElement("a");a.href=URL.createObject
 $("close").onclick=()=>$("dlg").close();
 if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const sb=SUPABASE_URL.startsWith("http")?supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY):null;
-const toRow=c=>({id:c.id,name:c.name,email:c.email,phone:c.phone,file:c.file,cv_text:c.text,status:c.status,note:c.note,posisi:c.posisi||"",score:c.score,detail:c.d});
-const fromRow=r=>({id:r.id,name:r.name,email:r.email||"",phone:r.phone||"",file:r.file||"",text:r.cv_text||"",status:r.status,note:r.note||"",posisi:r.posisi||"",score:r.score,d:r.detail||{hit:[],miss:[],y:0,e:0}});
+const toRow=c=>({id:c.id,name:c.name,email:c.email,phone:c.phone,file:c.file,cv_text:c.text,status:c.status,note:c.note,posisi:c.posisi||"",referensi:c.refs||[],pdf_path:c.pdf||null,score:c.score,detail:c.d});
+const fromRow=r=>({id:r.id,name:r.name,email:r.email||"",phone:r.phone||"",file:r.file||"",text:r.cv_text||"",status:r.status,note:r.note||"",posisi:r.posisi||"",refs:r.referensi||[],pdf:r.pdf_path||"",score:r.score,d:r.detail||{hit:[],miss:[],y:0,e:0}});
 const dbErr=e=>{if(e)$("msg").textContent="Gagal menyimpan ke database: "+e.message};
 async function dbSaveCand(c){const{error}=await sb.from("candidates").upsert(toRow(c));dbErr(error)}
 async function dbSaveCands(l){if(!l.length)return;const{error}=await sb.from("candidates").upsert(l.map(toRow));dbErr(error)}
-async function dbDel(id){const{error}=await sb.from("candidates").delete().eq("id",id);dbErr(error)}
-async function dbDelAll(){const{error}=await sb.from("candidates").delete().neq("id","");dbErr(error)}
+async function dbDel(id){const pc=S.cands.find(x=>x.id===id);if(pc&&pc.pdf)await sb.storage.from("cv").remove([pc.pdf]);const{error}=await sb.from("candidates").delete().eq("id",id);dbErr(error)}
+async function dbDelAll(){const ps=S.cands.map(x=>x.pdf).filter(Boolean);if(ps.length)await sb.storage.from("cv").remove(ps);const{error}=await sb.from("candidates").delete().neq("id","");dbErr(error)}
 async function dbSaveJob(j){const{error}=await sb.from("positions").upsert({id:j.id,title:j.title,kw:j.kw,yrs:+j.yrs||0,edu:+j.edu||0,pass:+j.pass||0});dbErr(error)}
 async function startApp(){
   const u=(await sb.auth.getUser()).data.user;
