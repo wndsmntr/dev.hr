@@ -141,7 +141,7 @@ dialog#cand[open]{display:flex;flex-direction:column}
 </head>
 <body>
 <div id="login-wrap"><section id="login" class="panel" style="max-width:380px;margin:60px auto" hidden>
-<h2>Masuk</h2><label for="em">Email</label><input type="text" id="em" autocomplete="username"><label for="pw">Kata sandi</label><input type="password" id="pw" autocomplete="current-password"><p id="lmsg" class="hint"></p><button class="primary" id="loginBtn">Masuk</button><p class="hint">Belum punya akun? Hubungi admin HRD.</p></section></div>
+<h2>Masuk</h2><label for="em">Email</label><input type="text" id="em" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="email"><label for="pw">Kata sandi</label><input type="password" id="pw" autocomplete="current-password" autocapitalize="none" autocorrect="off"><p id="lmsg" class="hint"></p><button class="primary" id="loginBtn">Masuk</button><p class="hint">Belum punya akun? Hubungi admin HRD.</p></section></div>
 <div id="shell" hidden>
   <aside id="side">
     <div class="brand"><span class="logo">C</span>Screening CV</div>
@@ -602,7 +602,7 @@ async function dbSaveJob(j){const{error}=await sb.from("positions").upsert({id:j
 async function startApp(){
   const u=(await sb.auth.getUser()).data.user;
   const pr=u?await sb.from("profiles").select("*").eq("id",u.id).maybeSingle():{};
-  if(!pr.data||!pr.data.approved){await sb.auth.signOut();showLogin();$("lmsg").textContent="Akun Anda menunggu persetujuan admin. Hubungi admin HRD, lalu masuk kembali.";return}
+  if(pr.error||!pr.data||!pr.data.approved){const m=pr.error?"Gagal memuat profil akun: "+pr.error.message:!pr.data?"Profil akun belum terbentuk. Minta admin menjalankan cek-akun.sql di Supabase.":"Akun Anda belum aktif atau dinonaktifkan. Hubungi admin.";await sb.auth.signOut();showLogin();$("lmsg").textContent=m;return}
   $("login").hidden=true;$("shell").hidden=false;$("logout").hidden=false;$("tools").hidden=false;S.admin=!!pr.data.is_admin;$("bAdmin").hidden=!S.admin;S.role=pr.data.is_admin?"admin":(pr.data.role||"hrd");S.isHR=S.role!=="user";applyRole();$("msg").textContent="Memuat data…";
   const j=await sb.from("positions").select("*").order("created_at");
   if(j.error){dbErr(j.error);return}
@@ -614,9 +614,11 @@ async function startApp(){
   S.cands=c.data.map(fromRow);S.cands.forEach(score);$("msg").textContent="";fillPos();fill();render();await loadSettings();startRealtime();noticeExpired()}
 function showLogin(){$("login").hidden=false;$("shell").hidden=true;$("logout").hidden=true;$("tools").hidden=true;if(rtCh){sb.removeChannel(rtCh);rtCh=null}}
 $("loginBtn").onclick=async()=>{
-  $("lmsg").textContent="";
-  const{error}=await sb.auth.signInWithPassword({email:$("em").value.trim(),password:$("pw").value});
-  if(error)$("lmsg").textContent="Masuk gagal: "+error.message;else startApp()};
+  $("lmsg").textContent="";const em=$("em").value.trim().toLowerCase(),pw=$("pw").value;
+  if(!em||!pw){$("lmsg").textContent="Isi email dan kata sandi.";return}
+  $("loginBtn").disabled=true;const{error}=await sb.auth.signInWithPassword({email:em,password:pw});$("loginBtn").disabled=false;
+  if(error){const m=error.message||"";$("lmsg").textContent=/invalid login/i.test(m)?"Email atau kata sandi salah. Pastikan kata sandi disalin persis, termasuk huruf besar dan kecil.":/not confirmed/i.test(m)?"Email akun ini belum dikonfirmasi. Minta admin menjalankan cek-akun.sql di Supabase.":"Masuk gagal: "+m;return}
+  startApp()};
 $("pw").onkeydown=e=>{if(e.key==="Enter")$("loginBtn").click()};
 $("logout").onclick=async()=>{await sb.auth.signOut();S.cands=[];render();showLogin()};
 (async()=>{
